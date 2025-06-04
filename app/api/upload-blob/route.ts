@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client"
+import { generateUploadUrl } from "@vercel/blob"
 
 export async function POST(request: Request): Promise<NextResponse> {
   console.log("[upload-blob] Handler invoked.") // VERY FIRST LOG
@@ -10,54 +10,40 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   console.log("[upload-blob] BLOB_READ_WRITE_TOKEN is present.")
 
-  let body: HandleUploadBody
+  let body: any
   try {
-    body = (await request.json()) as HandleUploadBody
-    console.log("[upload-blob] Request body parsed:", { pathname: body.pathname })
+    body = await request.json()
+    console.log("[upload-blob] Request body parsed:", body)
   } catch (e: any) {
     console.error("[upload-blob] Error parsing request JSON:", e.message)
     return NextResponse.json({ error: `Invalid request body: ${e.message}` }, { status: 400 })
   }
 
+  // If the client notifies that the upload completed, log the info and exit
+  if (body.completed) {
+    console.log("[upload-blob] Upload completed:", body.blob?.pathname)
+    if (body.tokenPayload) {
+      try {
+        const payload = JSON.parse(body.tokenPayload)
+        console.log("[upload-blob] Token payload on completion:", payload)
+      } catch {
+        console.log("[upload-blob] Token payload on completion:", body.tokenPayload)
+      }
+    }
+    return NextResponse.json({ status: "ok" })
+  }
+
   try {
-    const jsonResponse = await handleUpload({
-      body,
-      request,
-      onBeforeGenerateToken: async (pathname: string, clientPayload?: string) => {
-        console.log(`[upload-blob] onBeforeGenerateToken for pathname: ${pathname}`)
-        // Minimal token options
-        return {
-          allowedContentTypes: [
-            // Keep this reasonably broad for testing
-            "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "text/plain",
-            "text/markdown",
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "image/webp",
-          ],
-          tokenPayload: JSON.stringify({
-            originalPathname: pathname,
-            clientPayload: clientPayload || null,
-          }),
-          addRandomSuffix: true, // Good practice
-          cacheControlMaxAge: 3600, // 1 hour, can be adjusted
-        }
-      },
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        console.log("[upload-blob] Upload completed:", blob.pathname)
-        if (tokenPayload) {
-          const payload = JSON.parse(tokenPayload)
-          console.log(`[upload-blob] Token payload on completion:`, payload)
-        }
-      },
+    const { url: uploadUrl, tokenPayload } = await generateUploadUrl({
+      token: process.env.BLOB_READ_WRITE_TOKEN!,
+      pathname: body.pathname || body.filename,
+      contentType: body.contentType,
+      addRandomSuffix: true,
     })
-    console.log("[upload-blob] handleUpload successful, returning JSON response.")
-    return NextResponse.json(jsonResponse)
+    console.log("[upload-blob] Generated upload URL for", body.pathname)
+    return NextResponse.json({ uploadUrl, tokenPayload })
   } catch (error: any) {
-    console.error("[upload-blob] Error during handleUpload:", error.message, error.stack)
+    console.error("[upload-blob] Error generating upload URL:", error.message)
     return NextResponse.json({ error: `Blob upload processing failed: ${error.message}` }, { status: 500 })
   }
 }

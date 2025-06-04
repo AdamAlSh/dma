@@ -71,7 +71,9 @@ export default function AssessmentPage() {
   const [pastWorkText, setPastWorkText] = useState("")
 
   const handleFileUpload =
-    (setter: React.Dispatch<React.SetStateAction<FileUploadState>>) => async (event: ChangeEvent<HTMLInputElement>) => {
+    (setter: React.Dispatch<React.SetStateAction<FileUploadState>>) => async (
+      event: ChangeEvent<HTMLInputElement>
+    ) => {
       const file = event.target.files?.[0]
       if (!file) {
         setter({ ...initialFileUploadState, error: "No file selected." })
@@ -81,12 +83,30 @@ export default function AssessmentPage() {
       setter({ name: file.name, type: file.type, uploading: true, url: null, error: null })
 
       try {
-        const blobResult = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload-blob", // Our API route
+        // Request a presigned upload URL from our API
+        const presignRes = await fetch("/api/upload-blob", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pathname: file.name, contentType: file.type }),
         })
+        const { uploadUrl, tokenPayload } = await presignRes.json()
+
+        // Upload the file directly to Blob storage
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          body: file,
+        })
+        const blobResult = await uploadRes.json()
+
         setter({ name: file.name, type: file.type, url: blobResult.url, uploading: false, error: null })
         console.log(`File ${file.name} uploaded to ${blobResult.url}`)
+
+        // Notify the server that the upload has completed
+        await fetch("/api/upload-blob", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed: true, blob: blobResult, tokenPayload }),
+        })
       } catch (error: any) {
         console.error("Error uploading file:", error)
         setter({
